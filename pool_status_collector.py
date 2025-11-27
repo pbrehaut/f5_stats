@@ -61,8 +61,10 @@ def get_pool_members():
 
 if __name__ == '__main__':
     chassis_id = get_chassis_id()
-    datestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = "/var/tmp/{}_{}_pool_members.json".format(chassis_id, datestamp)
+    now = datetime.now()
+    date_part = now.strftime("%Y-%m-%d")
+    time_part = now.strftime("%H-%M-%S")
+    filename = "/var/tmp/{}__{}__{}_pool_members.json".format(chassis_id, date_part, time_part)
 
     data = get_pool_members()
 
