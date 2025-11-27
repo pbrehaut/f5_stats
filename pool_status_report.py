@@ -3,10 +3,10 @@ import pandas as pd
 import os
 from datetime import datetime
 
-# Mapping of host IDs to alternate hostnames
-HOST_MAPPING = {
-    'c1ae2eec-66f5-87c0-138b45053ffb': 'F51',
-    'host2': 'F52'
+# Mapping of host IDs to sites
+CHASSIS_MAPPING = {
+    'c1ae2eec-66f5-87c0-138b45053ffb': 'HMB-Viprion',
+    'c1ae2eec-66f5-87c0-138b45053ffb-2': 'HMB-R5900',
 }
 
 
@@ -18,24 +18,17 @@ def extract_file_info(filepath):
     # Expected format: hostID__YYYY-MM-DD__HH-MM-SS
     parts = filename_without_ext.split('__')
 
-    if len(parts) >= 3:
-        host_id = parts[0]
-        date_str = parts[1]
-        time_str = parts[2]
+    site_id = parts[0]
+    host_name = parts[1]
+    date_str = parts[2]
+    time_str = parts[3]
 
-        # Map host ID to alternate hostname
-        alt_hostname = HOST_MAPPING.get(host_id, host_id)
+    # Map host ID to alternate hostname
+    alt_site_name = CHASSIS_MAPPING.get(site_id, site_id)
 
-        # Parse datetime using datetime module
-        datetime_str = f"{date_str} {time_str.replace('-', ':')}"
-        try:
-            dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
-            formatted_datetime = dt.strftime('%Y-%m-%d %H:%M:%S')
-            return alt_hostname, formatted_datetime
-        except ValueError:
-            return alt_hostname, datetime_str
-    else:
-        return 'Unknown', 'Unknown'
+    # Parse datetime using datetime module
+    datetime_str = f"{date_str} {time_str.replace('-', ':')}"
+    return alt_site_name + ' ' + host_name, datetime_str
 
 
 def compare_pool_states(file1_path, file2_path, output_path):
@@ -98,6 +91,6 @@ def compare_pool_states(file1_path, file2_path, output_path):
 
 
 if __name__ == "__main__":
-    compare_pool_states('c1ae2eec-66f5-87c0-138b45053ffb__2025-11-27__17-30-25_pool_members.json',
-                        'c1ae2eec-66f5-87c0-138b45053ffb__2025-11-27__17-30-39_pool_members.json',
+    compare_pool_states('c1ae2eec-66f5-87c0-138b45053ffb__ampextltmp05.imsnet.vcsc.net.au__2025-11-28__08-48-41__pool_members.json',
+                        'c1ae2eec-66f5-87c0-138b45053ffb-2__ampextltmp05.imsnet.vcsc.net.au__2025-11-28__08-48-49__pool_members.json',
                         'pool_comparison.xlsx')

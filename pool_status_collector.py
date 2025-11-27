@@ -54,6 +54,11 @@ def get_chassis_id():
     return output.strip().split()[-1]
 
 
+def get_hostname():
+    output = run_command("tmsh list sys global-settings hostname | grep hostname")
+    return output.strip().split()[-1]
+
+
 def get_pool_members():
     output = run_command("tmsh show ltm pool members field-fmt")
     return parse_f5_config(output)
@@ -61,10 +66,11 @@ def get_pool_members():
 
 if __name__ == '__main__':
     chassis_id = get_chassis_id()
+    hostname = get_hostname()
     now = datetime.now()
     date_part = now.strftime("%Y-%m-%d")
     time_part = now.strftime("%H-%M-%S")
-    filename = "/var/tmp/{}__{}__{}_pool_members.json".format(chassis_id, date_part, time_part)
+    filename = "/var/tmp/{}__{}__{}__{}__pool_members.json".format(chassis_id, hostname, date_part, time_part)
 
     data = get_pool_members()
 
