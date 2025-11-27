@@ -1,6 +1,8 @@
 import json
 import pandas as pd
 import os
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 
 # Mapping of host IDs to sites
 CHASSIS_MAPPING = {
@@ -95,6 +97,7 @@ def compare_pool_states(file1_path, file2_path, output_path):
         data2 = json.load(f)
 
     results = []
+    mismatches = []
 
     # Column headers with host and time information
     col1_header = f"{host1} ({time1})"
@@ -108,13 +111,23 @@ def compare_pool_states(file1_path, file2_path, output_path):
         pool1_state = data1.get(pool_name, {}).get('status.availability-state', 'N/A')
         pool2_state = data2.get(pool_name, {}).get('status.availability-state', 'N/A')
 
+        match = 'Yes' if pool1_state == pool2_state else 'No'
+
         results.append({
             'Type': 'Pool',
             'Name': pool_name,
             col1_header: pool1_state,
             col2_header: pool2_state,
-            'Match': 'Yes' if pool1_state == pool2_state else 'No'
+            'Match': match
         })
+
+        if match == 'No':
+            mismatches.append({
+                'Type': 'Pool',
+                'Name': pool_name,
+                col1_header: pool1_state,
+                col2_header: pool2_state
+            })
 
         # Get all members from both files for this pool
         members1 = data1.get(pool_name, {}).get('members', {})
@@ -126,19 +139,65 @@ def compare_pool_states(file1_path, file2_path, output_path):
             member1_state = members1.get(member_name, {}).get('status.availability-state', 'N/A')
             member2_state = members2.get(member_name, {}).get('status.availability-state', 'N/A')
 
+            match = 'Yes' if member1_state == member2_state else 'No'
+            member_full_name = f"{pool_name} -> {member_name}"
+
             results.append({
                 'Type': 'Member',
-                'Name': f"{pool_name} -> {member_name}",
+                'Name': member_full_name,
                 col1_header: member1_state,
                 col2_header: member2_state,
-                'Match': 'Yes' if member1_state == member2_state else 'No'
+                'Match': match
             })
+
+            if match == 'No':
+                mismatches.append({
+                    'Type': 'Member',
+                    'Name': member_full_name,
+                    col1_header: member1_state,
+                    col2_header: member2_state
+                })
 
     # Create DataFrame and save to Excel
     df = pd.DataFrame(results)
     df.to_excel(output_path, index=False)
+
+    # Apply colour formatting to mismatched rows
+    wb = load_workbook(output_path)
+    ws = wb.active
+
+    # Yellow fill for mismatched rows
+    yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+
+    # Find the Match column (last column)
+    match_col = len(df.columns)
+
+    # Apply formatting (starting from row 2 to skip header)
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=match_col).value == 'No':
+            for col in range(1, ws.max_column + 1):
+                ws.cell(row=row, column=col).fill = yellow_fill
+
+    wb.save(output_path)
+
+    # Print results
     print(f"\nComparison saved to {output_path}")
     print(f"Compared {host1} ({time1}) vs {host2} ({time2})")
+
+    # Print mismatches to console
+    if mismatches:
+        print(f"\n{'=' * 80}")
+        print(f"MISMATCHES FOUND: {len(mismatches)}")
+        print(f"{'=' * 80}")
+        for mismatch in mismatches:
+            print(f"\nType: {mismatch['Type']}")
+            print(f"Name: {mismatch['Name']}")
+            print(f"  {col1_header}: {mismatch[col1_header]}")
+            print(f"  {col2_header}: {mismatch[col2_header]}")
+    else:
+        print(f"\n{'=' * 80}")
+        print("NO MISMATCHES FOUND - All states match!")
+        print(f"{'=' * 80}")
 
 
 if __name__ == "__main__":
