@@ -1,0 +1,72 @@
+import subprocess
+import re
+import json
+from datetime import datetime
+
+
+def parse_f5_config(text):
+    def parse_block(lines, idx=0):
+        result = {}
+        while idx < len(lines):
+            line = lines[idx].strip()
+            if not line or line == '}':
+                return result, idx
+
+            if '{' in line:
+                key = line.replace('{', '').strip()
+                nested, idx = parse_block(lines, idx + 1)
+                if key in result:
+                    if not isinstance(result[key], list):
+                        result[key] = [result[key]]
+                    result[key].append(nested)
+                else:
+                    result[key] = nested
+            else:
+                match = re.match(r'^([\w\-.]+)\s+(.*)$', line)
+                if match:
+                    key, value = match.groups()
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        try:
+                            value = float(value)
+                        except ValueError:
+                            pass
+                    result[key] = value
+            idx += 1
+        return result, idx
+
+    lines = text.strip().split('\n')
+    result, _ = parse_block(lines)
+    return result
+
+
+def run_command(cmd):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    stdout, stderr = proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError("Command failed: {}".format(stderr.decode()))
+    return stdout.decode()
+
+
+def get_chassis_id():
+    output = run_command("tmsh show sys hardware field-fmt | grep bigip-chassis-serial-num")
+    return output.strip().split()[-1]
+
+
+def get_pool_members():
+    output = run_command("tmsh show ltm pool members field-fmt")
+    return parse_f5_config(output)
+
+
+if __name__ == '__main__':
+    chassis_id = get_chassis_id()
+    datestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = "/var/tmp/{}_{}_pool_members.json".format(chassis_id, datestamp)
+
+    data = get_pool_members()
+
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    print("Saved to: {}".format(filename))
