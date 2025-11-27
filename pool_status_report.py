@@ -1,7 +1,6 @@
 import json
 import pandas as pd
 import os
-from datetime import datetime
 
 # Mapping of host IDs to sites
 CHASSIS_MAPPING = {
