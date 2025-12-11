@@ -59,9 +59,23 @@ def get_hostname():
     return output.strip().split()[-1]
 
 
-def get_pool_members():
+def get_ltm_pool_members():
     output = run_command("tmsh show ltm pool members field-fmt")
     return parse_f5_config(output)
+
+
+def get_gtm_pool_members():
+    output = run_command("tmsh show gtm pool a members field-fmt")
+    return parse_f5_config(output)
+
+
+def save_pool_data(data, chassis_id, hostname, date_part, time_part, pool_type):
+    filename = "/var/tmp/{}__{}__{}__{}__{}_pool_members.json".format(
+        chassis_id, hostname, date_part, time_part, pool_type
+    )
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=2)
+    print("Saved to: {}".format(filename))
 
 
 if __name__ == '__main__':
@@ -70,11 +84,9 @@ if __name__ == '__main__':
     now = datetime.now()
     date_part = now.strftime("%Y-%m-%d")
     time_part = now.strftime("%H-%M-%S")
-    filename = "/var/tmp/{}__{}__{}__{}__pool_members.json".format(chassis_id, hostname, date_part, time_part)
 
-    data = get_pool_members()
+    ltm_data = get_ltm_pool_members()
+    save_pool_data(ltm_data, chassis_id, hostname, date_part, time_part, "ltm")
 
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=2)
-
-    print("Saved to: {}".format(filename))
+    gtm_data = get_gtm_pool_members()
+    save_pool_data(gtm_data, chassis_id, hostname, date_part, time_part, "gtm")
