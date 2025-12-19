@@ -10,6 +10,8 @@ CHASSIS_MAPPING = {
     'chs412821s': 'HMB-Viprion-02',
     'chs412274s': 'GSW-Viprion-01',
     'chs412822s': 'GSW-Viprion-02',
+    'f5-arut-orvq': 'HMB-F5-r5900-03',
+    'f5-buoc-hruj': 'HMB-F5-r5900-04',
 }
 
 
