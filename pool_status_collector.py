@@ -85,8 +85,14 @@ if __name__ == '__main__':
     date_part = now.strftime("%Y-%m-%d")
     time_part = now.strftime("%H-%M-%S")
 
-    ltm_data = get_ltm_pool_members()
-    save_pool_data(ltm_data, chassis_id, hostname, date_part, time_part, "ltm")
+    try:
+        ltm_data = get_ltm_pool_members()
+        save_pool_data(ltm_data, chassis_id, hostname, date_part, time_part, "ltm")
+    except:
+        print("No LTM pools found or error retrieving LTM pool members.")
 
-    gtm_data = get_gtm_pool_members()
-    save_pool_data(gtm_data, chassis_id, hostname, date_part, time_part, "gtm")
+    try:
+        gtm_data = get_gtm_pool_members()
+        save_pool_data(gtm_data, chassis_id, hostname, date_part, time_part, "gtm")
+    except:
+        print("No GTM pools found or error retrieving GTM pool members.")
