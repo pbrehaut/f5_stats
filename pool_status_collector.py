@@ -60,12 +60,12 @@ def get_hostname():
 
 
 def get_ltm_pool_members():
-    output = run_command("tmsh show ltm pool /*//* members field-fmt")
+    output = run_command("tmsh show ltm pool /\*/\* members field-fmt")
     return parse_f5_config(output)
 
 
 def get_ltm_virtual_stats():
-    output = run_command("tmsh show ltm virtual /*//* field-fmt")
+    output = run_command("tmsh show ltm virtual /\*/\* field-fmt")
     return parse_f5_config(output)
 
 
