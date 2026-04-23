@@ -4,18 +4,19 @@
     highlighting reachability mismatches.
 
 .DESCRIPTION
-    Validates that both files have identical structure (same devices, same
-    entries, all with results blocks) before comparing. Aborts on any
-    structural difference to prevent misleading reports.
+    Presents a metadata-aware picker (label, run time, devices, host, user) for
+    each of the two files. Validates that both files have identical structure
+    (same devices, same entries, all with results blocks) before comparing, and
+    aborts on any structural difference.
 
     The comparison is based only on the 'reachable' field. Latency values are
     included in the output for reference but are not compared.
 
 .PARAMETER FileA
-    Path to the baseline results file. If omitted, a file picker is shown.
+    Path to the baseline results file. If omitted, a metadata picker is shown.
 
 .PARAMETER FileB
-    Path to the comparison results file. If omitted, a file picker is shown.
+    Path to the comparison results file. If omitted, a metadata picker is shown.
 
 .PARAMETER LabelA
     Column suffix for File A values in the CSV (default 'a').
@@ -26,11 +27,9 @@
 .PARAMETER OutputPath
     Output CSV path. Defaults to comparison_<timestamp>.csv next to File A.
 
-.EXAMPLE
-    .\Compare-ConnectivityResults.ps1
-
-.EXAMPLE
-    .\Compare-ConnectivityResults.ps1 -FileA .\before.json -FileB .\after.json -LabelA before -LabelB after
+.PARAMETER SearchPath
+    Folder to scan for result files when using the picker. Defaults to the
+    script's own folder.
 #>
 
 [CmdletBinding()]
@@ -39,37 +38,105 @@ param(
     [Parameter(Mandatory = $false)][string]$FileB,
     [Parameter(Mandatory = $false)][string]$LabelA = 'a',
     [Parameter(Mandatory = $false)][string]$LabelB = 'b',
-    [Parameter(Mandatory = $false)][string]$OutputPath
+    [Parameter(Mandatory = $false)][string]$OutputPath,
+    [Parameter(Mandatory = $false)][string]$SearchPath
 )
 
-# --- File picker helper -------------------------------------------------------
+# --- Result-file metadata helpers ---------------------------------------------
 
-function Select-JsonFile {
-    param([Parameter(Mandatory = $true)][string]$Title)
+function Get-ResultFileMetadata {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-    Add-Type -AssemblyName System.Windows.Forms
-    $dialog = New-Object System.Windows.Forms.OpenFileDialog
-    $dialog.Title = $Title
-    $dialog.Filter = 'JSON files (*.json)|*.json|All files (*.*)|*.*'
-    $dialog.Multiselect = $false
+    try {
+        $raw = Get-Content -Raw -Path $Path -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
 
-    if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+    if ($raw.PSObject.Properties.Name -contains '_meta') {
+        $m = $raw._meta
+        $devs = @()
+        if ($m.PSObject.Properties.Name -contains 'devices' -and $m.devices) {
+            $devs = @($m.devices)
+        }
+        return [PSCustomObject]@{
+            RunAt    = $m.run_at
+            Label    = if ($m.label) { $m.label } else { '(none)' }
+            Devices  = ($devs -join ', ')
+            Host     = $m.host
+            User     = $m.user
+            FileName = Split-Path -Leaf $Path
+            Path     = $Path
+        }
+    }
+
+    # Legacy file without _meta - show best-effort metadata.
+    $item = Get-Item -Path $Path
+    $devs = ($raw.PSObject.Properties.Name | Where-Object { $_ -ne '_meta' }) -join ', '
+    return [PSCustomObject]@{
+        RunAt    = $item.LastWriteTime.ToString('s')
+        Label    = '<legacy>'
+        Devices  = $devs
+        Host     = ''
+        User     = ''
+        FileName = Split-Path -Leaf $Path
+        Path     = $Path
+    }
+}
+
+function Select-ResultFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (-not (Test-Path -Path $Path -PathType Container)) {
+        Write-Warning "Search path does not exist: $Path"
+        exit 1
+    }
+
+    $files = Get-ChildItem -Path $Path -Filter '*_results_*.json' -File |
+        Sort-Object LastWriteTime -Descending
+
+    if (-not $files) {
+        Write-Warning "No result files found in $Path."
+        exit 1
+    }
+
+    $choices = foreach ($f in $files) { Get-ResultFileMetadata -Path $f.FullName }
+    $choices = $choices | Where-Object { $_ -ne $null }
+
+    $pick = $choices | Out-GridView -Title $Title -OutputMode Single
+    if (-not $pick) {
         Write-Warning "$Title - cancelled. Exiting."
         exit 1
     }
-    return $dialog.FileName
+    return $pick.Path
 }
 
 # --- Resolve input files ------------------------------------------------------
 
-if (-not $FileA) { $FileA = Select-JsonFile -Title 'Select File A (baseline)' }
-if (-not $FileB) { $FileB = Select-JsonFile -Title 'Select File B (comparison)' }
+if (-not $SearchPath) {
+    if ($PSScriptRoot) { $SearchPath = $PSScriptRoot }
+    else { $SearchPath = (Get-Location).Path }
+}
+
+if (-not $FileA) { $FileA = Select-ResultFile -Title 'Select File A (baseline)'   -Path $SearchPath }
+if (-not $FileB) { $FileB = Select-ResultFile -Title 'Select File B (comparison)' -Path $SearchPath }
 
 $fileAItem = Get-Item -Path $FileA -ErrorAction Stop
 $fileBItem = Get-Item -Path $FileB -ErrorAction Stop
 
+$metaA = Get-ResultFileMetadata -Path $fileAItem.FullName
+$metaB = Get-ResultFileMetadata -Path $fileBItem.FullName
+
+Write-Host ''
 Write-Host "File A: $($fileAItem.FullName)" -ForegroundColor Cyan
+if ($metaA) { Write-Host "        label: $($metaA.Label)   run_at: $($metaA.RunAt)" -ForegroundColor DarkCyan }
 Write-Host "File B: $($fileBItem.FullName)" -ForegroundColor Cyan
+if ($metaB) { Write-Host "        label: $($metaB.Label)   run_at: $($metaB.RunAt)" -ForegroundColor DarkCyan }
+Write-Host ''
 
 $dataA = Get-Content -Raw -Path $fileAItem.FullName | ConvertFrom-Json
 $dataB = Get-Content -Raw -Path $fileBItem.FullName | ConvertFrom-Json
@@ -79,8 +146,8 @@ $dataB = Get-Content -Raw -Path $fileBItem.FullName | ConvertFrom-Json
 $categories = @('vips', 'float_ips', 'non_float_ips')
 $validationErrors = New-Object System.Collections.Generic.List[string]
 
-$devicesA = $dataA.PSObject.Properties.Name | Sort-Object
-$devicesB = $dataB.PSObject.Properties.Name | Sort-Object
+$devicesA = $dataA.PSObject.Properties.Name | Where-Object { $_ -ne '_meta' } | Sort-Object
+$devicesB = $dataB.PSObject.Properties.Name | Where-Object { $_ -ne '_meta' } | Sort-Object
 
 $onlyInA = $devicesA | Where-Object { $_ -notin $devicesB }
 $onlyInB = $devicesB | Where-Object { $_ -notin $devicesA }
@@ -170,13 +237,13 @@ foreach ($device in $commonDevices) {
             $port = if ($entryA.PSObject.Properties.Name -contains 'port') { $entryA.port } else { '' }
 
             $row = [ordered]@{
-                device     = $device
-                category   = $category
-                name       = $entryName
-                ip         = $entryA.ip
-                port       = $port
-                test_type  = $categoryTestType[$category]
-                status     = $status
+                device    = $device
+                category  = $category
+                name      = $entryName
+                ip        = $entryA.ip
+                port      = $port
+                test_type = $categoryTestType[$category]
+                status    = $status
             }
             $row["reachable_$LabelA"]  = $reachableA.ToString().ToUpper()
             $row["reachable_$LabelB"]  = $reachableB.ToString().ToUpper()
@@ -188,7 +255,6 @@ foreach ($device in $commonDevices) {
     }
 }
 
-# Mismatches first, then device, then name
 $sorted = $rows | Sort-Object `
     @{ Expression = { if ($_.status -eq 'MISMATCH') { 0 } else { 1 } } }, `
     device, category, name

@@ -1,13 +1,20 @@
 <#
 .SYNOPSIS
-    Runs TCP/ICMP connectivity tests against devices defined in a JSON file and
-    writes a timestamped copy of the file with results added.
+    Runs TCP/ICMP connectivity tests against devices defined in a JSON file
+    and writes a timestamped, labelled copy of the file with results added.
+
+.DESCRIPTION
+    After selecting devices to test, the user is prompted for a run label
+    (none, pre-change, post-change, or a custom value). The label, run time
+    and other metadata are embedded in a top-level '_meta' block in the
+    output JSON and are also reflected in the output filename so that runs
+    are easy to identify later.
 
 .PARAMETER InputPath
     Path to the source JSON file.
 
 .EXAMPLE
-    .\Test-DeviceConnectivity.ps1 -InputPath .\devices.json
+    .\test_runner.ps1 -InputPath .\test_data.json
 #>
 
 [CmdletBinding()]
@@ -21,6 +28,8 @@ param(
     [Parameter(Mandatory = $false)]
     [int]$IcmpTimeoutMs = 200
 )
+
+# --- Connectivity helpers -----------------------------------------------------
 
 function Test-TcpPort {
     param(
@@ -75,6 +84,61 @@ function Test-IcmpPing {
     }
 }
 
+# --- Label helpers ------------------------------------------------------------
+
+function Get-SanitisedLabel {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw
+    )
+    # Allow letters, digits, dash, underscore. Everything else becomes underscore.
+    $clean = ($Raw -replace '[^A-Za-z0-9_\-]', '_').Trim('_')
+    if ($clean.Length -gt 40) { $clean = $clean.Substring(0, 40) }
+    return $clean
+}
+
+function Get-RunLabel {
+    $options = @(
+        [PSCustomObject]@{ Choice = '(none)';      Description = 'No label' }
+        [PSCustomObject]@{ Choice = 'pre-change';  Description = 'Before a change has been made' }
+        [PSCustomObject]@{ Choice = 'post-change'; Description = 'After a change has been made' }
+        [PSCustomObject]@{ Choice = 'Custom...';   Description = 'Enter a custom label' }
+    )
+
+    $picked = $options |
+        Out-GridView -Title 'Select a label for this run' -OutputMode Single
+
+    if (-not $picked) {
+        Write-Warning 'No label selected. Exiting.'
+        exit 1
+    }
+
+    switch ($picked.Choice) {
+        '(none)' {
+            return ''
+        }
+        'Custom...' {
+            Add-Type -AssemblyName Microsoft.VisualBasic
+            $raw = [Microsoft.VisualBasic.Interaction]::InputBox(
+                'Enter a label for this run (letters, digits, dash and underscore only):',
+                'Custom run label',
+                '')
+            if (-not $raw) {
+                Write-Warning 'No custom label entered. Exiting.'
+                exit 1
+            }
+            $clean = Get-SanitisedLabel -Raw $raw
+            if (-not $clean) {
+                Write-Warning 'Custom label was empty after sanitising. Exiting.'
+                exit 1
+            }
+            return $clean
+        }
+        default {
+            return (Get-SanitisedLabel -Raw $picked.Choice)
+        }
+    }
+}
+
 # --- Load input ---------------------------------------------------------------
 
 $inputFile = Get-Item -Path $InputPath -ErrorAction Stop
@@ -91,13 +155,16 @@ if (-not $selected) {
     return
 }
 
+# --- Select run label (after device selection, as requested) ------------------
+
+$label = Get-RunLabel
+
 # --- Run tests ----------------------------------------------------------------
 
 foreach ($deviceName in $selected) {
     $device = $data.$deviceName
     Write-Host "Testing $deviceName..." -ForegroundColor Cyan
 
-    # VIPs — TCP port tests
     if ($device.PSObject.Properties.Name -contains 'vips') {
         foreach ($vipProp in $device.vips.PSObject.Properties) {
             $entry = $vipProp.Value
@@ -106,7 +173,6 @@ foreach ($deviceName in $selected) {
         }
     }
 
-    # Float IPs — ICMP
     if ($device.PSObject.Properties.Name -contains 'float_ips') {
         foreach ($ipProp in $device.float_ips.PSObject.Properties) {
             $entry = $ipProp.Value
@@ -115,7 +181,6 @@ foreach ($deviceName in $selected) {
         }
     }
 
-    # Non-float IPs — ICMP
     if ($device.PSObject.Properties.Name -contains 'non_float_ips') {
         foreach ($ipProp in $device.non_float_ips.PSObject.Properties) {
             $entry = $ipProp.Value
@@ -125,18 +190,37 @@ foreach ($deviceName in $selected) {
     }
 }
 
-# --- Write output -------------------------------------------------------------
+# --- Assemble output with metadata --------------------------------------------
 
 $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-$outputName = '{0}_results_{1}{2}' -f $inputFile.BaseName, $timestamp, $inputFile.Extension
-$outputPath = Join-Path -Path $inputFile.DirectoryName -ChildPath $outputName
+$runAtIso  = (Get-Date).ToString('o')  # ISO-8601 for unambiguous parsing later
 
-# Build output containing only the devices that were tested
-$output = [ordered]@{}
+$meta = [ordered]@{
+    run_at     = $runAtIso
+    label      = $label
+    devices    = @($selected)
+    host       = $env:COMPUTERNAME
+    user       = $env:USERNAME
+    input_file = $inputFile.Name
+}
+
+$output = [ordered]@{ _meta = $meta }
 foreach ($deviceName in $selected) {
     $output[$deviceName] = $data.$deviceName
 }
 
+# --- Build filename -----------------------------------------------------------
+
+$devicePart   = ($selected -join '+')
+$labelSegment = if ($label) { "__$label" } else { '' }
+
+$outputName = '{0}_results__{1}{2}__{3}{4}' -f `
+    $inputFile.BaseName, $devicePart, $labelSegment, $timestamp, $inputFile.Extension
+
+$outputPath = Join-Path -Path $inputFile.DirectoryName -ChildPath $outputName
+
 $output | ConvertTo-Json -Depth 20 | Set-Content -Path $outputPath -Encoding UTF8
 
+Write-Host ''
+Write-Host "Label:   $(if ($label) { $label } else { '(none)' })" -ForegroundColor Cyan
 Write-Host "Results written to: $outputPath" -ForegroundColor Green
