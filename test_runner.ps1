@@ -98,24 +98,20 @@ function Get-SanitisedLabel {
 
 function Get-RunLabel {
     $options = @(
-        [PSCustomObject]@{ Choice = '(none)';      Description = 'No label' }
         [PSCustomObject]@{ Choice = 'pre-change';  Description = 'Before a change has been made' }
         [PSCustomObject]@{ Choice = 'post-change'; Description = 'After a change has been made' }
         [PSCustomObject]@{ Choice = 'Custom...';   Description = 'Enter a custom label' }
     )
 
     $picked = $options |
-        Out-GridView -Title 'Select a label for this run' -OutputMode Single
+        Out-GridView -Title 'Select a label for this run (required)' -OutputMode Single
 
     if (-not $picked) {
-        Write-Warning 'No label selected. Exiting.'
+        Write-Warning 'A label is required. Exiting.'
         exit 1
     }
 
     switch ($picked.Choice) {
-        '(none)' {
-            return ''
-        }
         'Custom...' {
             Add-Type -AssemblyName Microsoft.VisualBasic
             $raw = [Microsoft.VisualBasic.Interaction]::InputBox(
@@ -212,7 +208,7 @@ foreach ($deviceName in $selected) {
 # --- Build filename -----------------------------------------------------------
 
 $devicePart   = ($selected -join '+')
-$labelSegment = if ($label) { "__$label" } else { '' }
+$labelSegment = "__$label"
 
 $outputName = '{0}_results__{1}{2}__{3}{4}' -f `
     $inputFile.BaseName, $devicePart, $labelSegment, $timestamp, $inputFile.Extension
@@ -222,5 +218,5 @@ $outputPath = Join-Path -Path $inputFile.DirectoryName -ChildPath $outputName
 $output | ConvertTo-Json -Depth 20 | Set-Content -Path $outputPath -Encoding UTF8
 
 Write-Host ''
-Write-Host "Label:   $(if ($label) { $label } else { '(none)' })" -ForegroundColor Cyan
+Write-Host "Label:   $label" -ForegroundColor Cyan
 Write-Host "Results written to: $outputPath" -ForegroundColor Green

@@ -18,14 +18,8 @@
 .PARAMETER FileB
     Path to the comparison results file. If omitted, a metadata picker is shown.
 
-.PARAMETER LabelA
-    Column suffix for File A values in the CSV (default 'a').
-
-.PARAMETER LabelB
-    Column suffix for File B values in the CSV (default 'b').
-
 .PARAMETER OutputPath
-    Output CSV path. Defaults to comparison_<timestamp>.csv next to File A.
+    Output CSV path. Defaults to comparison_<devices>_<labelA>_vs_<labelB>_<timestamp>.csv next to File A.
 
 .PARAMETER SearchPath
     Folder to scan for result files when using the picker. Defaults to the
@@ -36,8 +30,6 @@
 param(
     [Parameter(Mandatory = $false)][string]$FileA,
     [Parameter(Mandatory = $false)][string]$FileB,
-    [Parameter(Mandatory = $false)][string]$LabelA = 'a',
-    [Parameter(Mandatory = $false)][string]$LabelB = 'b',
     [Parameter(Mandatory = $false)][string]$OutputPath,
     [Parameter(Mandatory = $false)][string]$SearchPath
 )
@@ -208,6 +200,17 @@ if ($validationErrors.Count -gt 0) {
 
 Write-Host 'Validation passed. Generating comparison...' -ForegroundColor Green
 
+# --- Determine column suffixes from labels -----------------------------------
+
+if ($metaA.Label -eq $metaB.Label) {
+    Write-Warning "Both files have the same label ('$($metaA.Label)'). Falling back to 'a' and 'b' column suffixes."
+    $LabelA = 'a'
+    $LabelB = 'b'
+} else {
+    $LabelA = $metaA.Label
+    $LabelB = $metaB.Label
+}
+
 # --- Build report rows --------------------------------------------------------
 
 $categoryTestType = @{
@@ -263,7 +266,18 @@ $sorted = $rows | Sort-Object `
 
 if (-not $OutputPath) {
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $OutputPath = Join-Path -Path $fileAItem.DirectoryName -ChildPath ("comparison_{0}.csv" -f $timestamp)
+
+    # Devices in filename, capped so it doesn't explode
+    $deviceList = @($commonDevices)
+    if ($deviceList.Count -gt 3) {
+        $devicePart = ($deviceList[0..2] -join '+') + ('+{0}more' -f ($deviceList.Count - 3))
+    } else {
+        $devicePart = $deviceList -join '+'
+    }
+
+    $labelPart  = '{0}_vs_{1}' -f $LabelA, $LabelB
+    $outputName = 'comparison_{0}_{1}_{2}.csv' -f $devicePart, $labelPart, $timestamp
+    $OutputPath = Join-Path -Path $fileAItem.DirectoryName -ChildPath $outputName
 }
 
 $sorted | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
