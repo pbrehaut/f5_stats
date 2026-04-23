@@ -100,7 +100,7 @@ function Select-PoolType {
 function Select-ComparisonFiles {
     <#
     .SYNOPSIS
-        Prompts user to select exactly 2 files via Out-GridView (multi-select).
+        Prompts user to select two files via two sequential Out-GridView prompts.
     .PARAMETER PoolType
         'ltm' or 'gtm'.
     #>
@@ -128,15 +128,24 @@ function Select-ComparisonFiles {
         }
     }
 
-    $title = "Select exactly 2 $($PoolType.ToUpper()) files (Ctrl+click two rows, then OK)"
-    $selected = @($rows | Out-GridView -Title $title -OutputMode Multiple)
-
-    if ($selected.Count -ne 2) {
-        Write-Warning "Exactly 2 files must be selected. You selected $($selected.Count)."
+    # First file
+    $first = $rows |
+        Out-GridView -Title "Select FIRST $($PoolType.ToUpper()) file" -OutputMode Single
+    if ($null -eq $first) {
+        Write-Warning "No file selected for first slot."
         return $null
     }
 
-    $selected
+    # Second file - exclude the one already picked
+    $remaining = @($rows | Where-Object { $_.FullPath -ne $first.FullPath })
+    $second = $remaining |
+        Out-GridView -Title "Select SECOND $($PoolType.ToUpper()) file (compared against '$($first.FileName)')" -OutputMode Single
+    if ($null -eq $second) {
+        Write-Warning "No file selected for second slot."
+        return $null
+    }
+
+    @($first, $second)
 }
 
 function Get-StateValue {
