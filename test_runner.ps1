@@ -12,8 +12,8 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$InputPath,
+    [Parameter(Mandatory = $false)]
+    [string]$InputPath = 'C:\Users\pbrehaut4\PycharmProjects\f5_stats\test_data.json',
 
     [Parameter(Mandatory = $false)]
     [int]$TcpTimeoutMs = 200,
@@ -131,6 +131,12 @@ $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $outputName = '{0}_results_{1}{2}' -f $inputFile.BaseName, $timestamp, $inputFile.Extension
 $outputPath = Join-Path -Path $inputFile.DirectoryName -ChildPath $outputName
 
-$data | ConvertTo-Json -Depth 20 | Set-Content -Path $outputPath -Encoding UTF8
+# Build output containing only the devices that were tested
+$output = [ordered]@{}
+foreach ($deviceName in $selected) {
+    $output[$deviceName] = $data.$deviceName
+}
+
+$output | ConvertTo-Json -Depth 20 | Set-Content -Path $outputPath -Encoding UTF8
 
 Write-Host "Results written to: $outputPath" -ForegroundColor Green
