@@ -54,6 +54,7 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+[System.Net.ServicePointManager]::Expect100Continue = $false
 
 # ---------------------------------------------------------------------------
 # Authentication
@@ -71,7 +72,7 @@ function New-F5AuthToken {
     } | ConvertTo-Json
 
     Write-Verbose "Requesting auth token from $uri"
-    $response = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json'
+    $response = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -DisableKeepAlive
     return [string]$response.token.token
 }
 
@@ -82,7 +83,7 @@ function Remove-F5AuthToken {
     )
     $uri = "https://$F5Host/mgmt/shared/authz/tokens/$Token"
     try {
-        Invoke-RestMethod -Uri $uri -Method Delete -Headers @{ 'X-F5-Auth-Token' = $Token } | Out-Null
+        Invoke-RestMethod -Uri $uri -Method Delete -Headers @{ 'X-F5-Auth-Token' = $Token } -DisableKeepAlive | Out-Null
         Write-Verbose "Auth token revoked"
     }
     catch {
@@ -98,7 +99,7 @@ function Invoke-F5Rest {
     )
     $uri = "https://$F5Host$Path"
     Write-Verbose "GET $uri"
-    return Invoke-RestMethod -Uri $uri -Method Get -Headers @{ 'X-F5-Auth-Token' = $Token }
+    return Invoke-RestMethod -Uri $uri -Method Get -Headers @{ 'X-F5-Auth-Token' = $Token } -DisableKeepAlive
 }
 
 # ---------------------------------------------------------------------------
