@@ -57,6 +57,76 @@ $ErrorActionPreference = 'Stop'
 [System.Net.ServicePointManager]::Expect100Continue = $false
 
 # ---------------------------------------------------------------------------
+# HTTP: we use curl.exe instead of Invoke-RestMethod. PS 5.1's underlying
+# WinHTTP/HttpWebRequest stack has a known bug where GET/DELETE requests
+# against certain servers (including some F5 versions) fail with
+# "The underlying connection was closed: An unexpected error occurred on a
+# send." The bug does not exist in PS 7.x or curl. See:
+#   https://learn.microsoft.com/en-us/answers/questions/1049779/
+# curl.exe ships with Windows 10 1803+ at C:\Windows\System32\curl.exe and
+# is a reliable workaround.
+# ---------------------------------------------------------------------------
+$script:CurlExe = Join-Path $env:SystemRoot 'System32\curl.exe'
+
+function Invoke-CurlRest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $false)][string]$Method = 'GET',
+        [Parameter(Mandatory = $false)][hashtable]$Headers = @{},
+        [Parameter(Mandatory = $false)][string]$Body = $null
+    )
+
+    if (-not (Test-Path -LiteralPath $script:CurlExe)) {
+        throw "curl.exe not found at $script:CurlExe. Requires Windows 10 1803 or newer."
+    }
+
+    $curlArgs = @(
+        '-sS',              # silent but show errors
+        '-k',               # skip cert validation (self-signed F5 mgmt cert)
+        '-X', $Method
+    )
+
+    foreach ($key in $Headers.Keys) {
+        $curlArgs += '-H'
+        $curlArgs += "${key}: $($Headers[$key])"
+    }
+
+    $tempFile = $null
+    try {
+        if ($Body) {
+            # Write body to a temp file and pass via --data-binary @file.
+            # Avoids PS 5.1's quote-mangling of native-exe arguments, and the
+            # UTF-8-with-BOM default of Set-Content/Out-File.
+            $tempFile = [System.IO.Path]::GetTempFileName()
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($tempFile, $Body, $utf8NoBom)
+            $curlArgs += '--data-binary'
+            $curlArgs += "@$tempFile"
+        }
+
+        $curlArgs += $Uri
+
+        Write-Verbose "$Method $Uri"
+        $output = & $script:CurlExe @curlArgs 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "curl.exe failed (exit $LASTEXITCODE) on ${Method} ${Uri}: $output"
+        }
+
+        $responseText = ($output | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($responseText)) {
+            return $null
+        }
+        return $responseText | ConvertFrom-Json
+    }
+    finally {
+        if ($tempFile -and (Test-Path -LiteralPath $tempFile)) {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
 function New-F5AuthToken {
@@ -72,7 +142,9 @@ function New-F5AuthToken {
     } | ConvertTo-Json
 
     Write-Verbose "Requesting auth token from $uri"
-    $response = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -DisableKeepAlive
+    $response = Invoke-CurlRest -Uri $uri -Method 'POST' `
+        -Headers @{ 'Content-Type' = 'application/json' } `
+        -Body $body
     return [string]$response.token.token
 }
 
@@ -83,7 +155,8 @@ function Remove-F5AuthToken {
     )
     $uri = "https://$F5Host/mgmt/shared/authz/tokens/$Token"
     try {
-        Invoke-RestMethod -Uri $uri -Method Delete -Headers @{ 'X-F5-Auth-Token' = $Token } -DisableKeepAlive | Out-Null
+        Invoke-CurlRest -Uri $uri -Method 'DELETE' `
+            -Headers @{ 'X-F5-Auth-Token' = $Token } | Out-Null
         Write-Verbose "Auth token revoked"
     }
     catch {
@@ -98,8 +171,8 @@ function Invoke-F5Rest {
         [Parameter(Mandatory = $true)][string]$Path
     )
     $uri = "https://$F5Host$Path"
-    Write-Verbose "GET $uri"
-    return Invoke-RestMethod -Uri $uri -Method Get -Headers @{ 'X-F5-Auth-Token' = $Token } -DisableKeepAlive
+    return Invoke-CurlRest -Uri $uri -Method 'GET' `
+        -Headers @{ 'X-F5-Auth-Token' = $Token }
 }
 
 # ---------------------------------------------------------------------------
