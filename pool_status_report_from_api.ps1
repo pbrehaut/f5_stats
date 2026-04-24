@@ -301,12 +301,16 @@ function Compare-Records {
         }
     }
 
+    # Define mismatches output file path
+    $mismatchesOutputPath = $OutputPath -replace '\.csv$', '_mismatches.csv'
+
     Write-ComparisonOutput `
         -Results $results -Mismatches $mismatches `
         -Col1 $col1 -Col2 $col2 `
         -Info1 $info1 -Info2 $info2 `
         -IdentifierColumns $identifierColumns `
-        -OutputPath $OutputPath
+        -OutputPath $OutputPath `
+        -MismatchesOutputPath $mismatchesOutputPath
 }
 
 function Write-ComparisonOutput {
@@ -323,10 +327,15 @@ function Write-ComparisonOutput {
         [Parameter(Mandatory = $true)]$Info1,
         [Parameter(Mandatory = $true)]$Info2,
         [Parameter(Mandatory = $true)][string[]]$IdentifierColumns,
-        [Parameter(Mandatory = $true)][string]$OutputPath
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [Parameter(Mandatory = $false)][string]$MismatchesOutputPath
     )
 
     $Results | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
+
+    if ($MismatchesOutputPath -and $Mismatches.Count -gt 0) {
+        $Mismatches | Export-Csv -Path $MismatchesOutputPath -NoTypeInformation -Encoding UTF8
+    }
 
     Write-Host ""
     Write-Host "Comparison saved to $OutputPath"
@@ -334,6 +343,9 @@ function Write-ComparisonOutput {
 
     $sep = '=' * 80
     if ($Mismatches.Count -gt 0) {
+        if ($MismatchesOutputPath) {
+            Write-Host "Mismatches saved to $MismatchesOutputPath"
+        }
         Write-Host ""
         Write-Host $sep
         Write-Host "MISMATCHES FOUND: $($Mismatches.Count)"
@@ -345,6 +357,13 @@ function Write-ComparisonOutput {
             }
             Write-Host "  ${Col1}: $($mm.$Col1)"
             Write-Host "  ${Col2}: $($mm.$Col2)"
+        }
+        # Print a summary table of mismatches at the end
+        Write-Host "\nSummary of mismatches (first 10):"
+        $summary = $Mismatches | Select-Object -First 10
+        $summary | Format-Table -AutoSize | Out-String | Write-Host
+        if ($Mismatches.Count -gt 10) {
+            Write-Host "...and $($Mismatches.Count - 10) more. See $MismatchesOutputPath for full list."
         }
     } else {
         Write-Host ""
