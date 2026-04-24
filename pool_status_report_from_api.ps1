@@ -21,12 +21,14 @@
 # Mapping of chassis serial numbers (first filename component) to friendly
 # site names. Matches meta.chassisSerial in the JSON.
 $ChassisMapping = @{
-    'chs412276s'   = 'HMB-Viprion-01'
-    'chs412821s'   = 'HMB-Viprion-02'
-    'chs412274s'   = 'GSW-Viprion-01'
-    'chs412822s'   = 'GSW-Viprion-02'
-    'f5-arut-orvq' = 'HMB-F5-r5900-03'
-    'f5-buoc-hruj' = 'HMB-F5-r5900-04'
+    'f5-vthj-xyip' = 'i2800'
+    'f5-pojm-ubkq' = 'i2800'
+    'f5-tgjr-mmhr' = 'i2800'
+    'f5-zqsd-juxk' = 'i2800'
+    'f5-aukb-tfuu' = 'rSeries'
+    'f5-hoxa-pkuu' = 'rSeries'
+    'f5-tvyi-kdyh' = 'rSeries'
+    'f5-tyoa-wggu' = 'rSeries'
 }
 
 function Get-FileInfo {
