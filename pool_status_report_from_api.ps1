@@ -169,29 +169,66 @@ function Get-StateValue {
     [string]$val
 }
 
-function Get-RecordsByKey {
+function Get-MemberDisplayName {
     <#
     .SYNOPSIS
-        Indexes an array of records by a key-building scriptblock.
+        Returns a display name for a pool member record, falling back through
+        memberName -> address:port -> address -> '' when fields are missing.
+    .NOTES
+        The collector currently has a bug where memberName is null; this
+        fallback keeps the report usable until the collector is fixed.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Record
+    )
+
+    if ($null -ne $Record.memberName -and $Record.memberName -ne '') {
+        return [string]$Record.memberName
+    }
+
+    $addr = $Record.address
+    $port = $Record.port
+    if ($null -ne $addr -and $addr -ne '') {
+        if ($null -ne $port -and $port -ne '') {
+            return "${addr}:${port}"
+        }
+        return [string]$addr
+    }
+    return ''
+}
+
+function Get-IdentifiedRecords {
+    <#
+    .SYNOPSIS
+        Indexes an array of records by the concatenated values returned by
+        an identifier-builder scriptblock. Each map entry stores both the
+        original record and the ordered identifier hashtable so the output
+        row can reproduce the identifier columns.
     .PARAMETER Records
-        Array of record objects (may be $null or a single object — PS 5.1
-        ConvertFrom-Json unwraps single-element arrays).
-    .PARAMETER KeyBuilder
-        Scriptblock that takes one record and returns a string key.
+        Array of record objects (may be $null, a single object, or an array —
+        PS 5.1 ConvertFrom-Json can return any of these).
+    .PARAMETER IdentifierBuilder
+        Scriptblock taking one record and returning [ordered]@{col=value;...}.
     #>
     [CmdletBinding()]
     [OutputType([hashtable])]
     param(
         [Parameter(Mandatory = $true)][AllowNull()]$Records,
-        [Parameter(Mandatory = $true)][scriptblock]$KeyBuilder
+        [Parameter(Mandatory = $true)][scriptblock]$IdentifierBuilder
     )
 
     $map = @{}
     if ($null -eq $Records) { return $map }
+
     foreach ($r in $Records) {
-        $k = & $KeyBuilder $r
-        if ($null -eq $k -or $k -eq '') { continue }
-        $map[$k] = $r
+        $idents = & $IdentifierBuilder $r
+        $key    = ($idents.Values | ForEach-Object { "$_" }) -join '|'
+        # Skip records where every identifier value is blank.
+        if ($key -replace '\|', '' -eq '') { continue }
+        $map[$key] = @{ Record = $r; Identifiers = $idents }
     }
     $map
 }
@@ -199,19 +236,21 @@ function Get-RecordsByKey {
 function Compare-Records {
     <#
     .SYNOPSIS
-        Compares availabilityState across two sets of records keyed by a
-        scriptblock. Builds the CSV rows and mismatch list, then hands off
-        to Write-ComparisonOutput.
-    .PARAMETER TypeLabel
-        Value for the 'Type' column (e.g. 'Member' or 'Virtual').
+        Compares availabilityState across two sets of records, keyed and
+        labelled by an identifier-builder scriptblock. Writes CSV output and
+        prints a console mismatch summary.
+    .PARAMETER IdentifierBuilder
+        Scriptblock taking one record and returning [ordered]@{col=value;...}.
+        The keys of the returned hashtable become the leading columns of
+        the CSV; the values are used both as column data and (joined with '|')
+        as the cross-file matching key.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$File1Path,
         [Parameter(Mandatory = $true)][string]$File2Path,
         [Parameter(Mandatory = $true)][string]$OutputPath,
-        [Parameter(Mandatory = $true)][string]$TypeLabel,
-        [Parameter(Mandatory = $true)][scriptblock]$KeyBuilder
+        [Parameter(Mandatory = $true)][scriptblock]$IdentifierBuilder
     )
 
     $info1 = Get-FileInfo -FilePath $File1Path
@@ -222,35 +261,40 @@ function Compare-Records {
     $data1 = Get-Content -Path $File1Path -Raw | ConvertFrom-Json
     $data2 = Get-Content -Path $File2Path -Raw | ConvertFrom-Json
 
-    $map1 = Get-RecordsByKey -Records $data1.records -KeyBuilder $KeyBuilder
-    $map2 = Get-RecordsByKey -Records $data2.records -KeyBuilder $KeyBuilder
+    $map1 = Get-IdentifiedRecords -Records $data1.records -IdentifierBuilder $IdentifierBuilder
+    $map2 = Get-IdentifiedRecords -Records $data2.records -IdentifierBuilder $IdentifierBuilder
 
     $allKeys = @(($map1.Keys + $map2.Keys) | Sort-Object -Unique)
 
     $results    = New-Object System.Collections.Generic.List[object]
     $mismatches = New-Object System.Collections.Generic.List[object]
+    $identifierColumns = @()
 
     foreach ($key in $allKeys) {
-        $r1    = $map1[$key]
-        $r2    = $map2[$key]
-        $s1    = Get-StateValue -Record $r1
-        $s2    = Get-StateValue -Record $r2
+        $entry1 = $map1[$key]
+        $entry2 = $map2[$key]
+
+        # Prefer file 1 for the identifier values. If a record only exists
+        # on one side, use that side's identifiers.
+        $idents = if ($null -ne $entry1) { $entry1.Identifiers } else { $entry2.Identifiers }
+        if ($identifierColumns.Count -eq 0) { $identifierColumns = @($idents.Keys) }
+
+        $r1 = if ($null -ne $entry1) { $entry1.Record } else { $null }
+        $r2 = if ($null -ne $entry2) { $entry2.Record } else { $null }
+        $s1 = Get-StateValue -Record $r1
+        $s2 = Get-StateValue -Record $r2
         $match = if ($s1 -eq $s2) { 'Yes' } else { 'No' }
 
-        $row = [ordered]@{
-            Type = $TypeLabel
-            Name = $key
-        }
+        $row = [ordered]@{}
+        foreach ($k in $idents.Keys) { $row[$k] = $idents[$k] }
         $row[$col1]   = $s1
         $row[$col2]   = $s2
         $row['Match'] = $match
         $results.Add([PSCustomObject]$row)
 
         if ($match -eq 'No') {
-            $mm = [ordered]@{
-                Type = $TypeLabel
-                Name = $key
-            }
+            $mm = [ordered]@{}
+            foreach ($k in $idents.Keys) { $mm[$k] = $idents[$k] }
             $mm[$col1] = $s1
             $mm[$col2] = $s2
             $mismatches.Add([PSCustomObject]$mm)
@@ -261,6 +305,7 @@ function Compare-Records {
         -Results $results -Mismatches $mismatches `
         -Col1 $col1 -Col2 $col2 `
         -Info1 $info1 -Info2 $info2 `
+        -IdentifierColumns $identifierColumns `
         -OutputPath $OutputPath
 }
 
@@ -277,6 +322,7 @@ function Write-ComparisonOutput {
         [Parameter(Mandatory = $true)][string]$Col2,
         [Parameter(Mandatory = $true)]$Info1,
         [Parameter(Mandatory = $true)]$Info2,
+        [Parameter(Mandatory = $true)][string[]]$IdentifierColumns,
         [Parameter(Mandatory = $true)][string]$OutputPath
     )
 
@@ -294,8 +340,9 @@ function Write-ComparisonOutput {
         Write-Host $sep
         foreach ($mm in $Mismatches) {
             Write-Host ""
-            Write-Host "Type: $($mm.Type)"
-            Write-Host "Name: $($mm.Name)"
+            foreach ($c in $IdentifierColumns) {
+                Write-Host "${c}: $($mm.$c)"
+            }
             Write-Host "  ${Col1}: $($mm.$Col1)"
             Write-Host "  ${Col2}: $($mm.$Col2)"
         }
@@ -326,24 +373,31 @@ $outputFile = Join-Path -Path (Get-Location) -ChildPath "${dataType}_comparison.
 
 switch ($dataType) {
     'ltmPoolMembers' {
-        # Composite key: "/Common/pool1 -> /Common/10.0.0.1:80"
-        # Same memberName can appear across multiple pools, so pool+member is required.
-        $keyBuilder = { param($r) "$($r.poolName) -> $($r.memberName)" }
+        # Pool + Member identifier columns. Member falls back to address:port
+        # when memberName is null (known collector bug).
+        $identBuilder = {
+            param($r)
+            [ordered]@{
+                Pool   = [string]$r.poolName
+                Member = Get-MemberDisplayName -Record $r
+            }
+        }
         Compare-Records `
             -File1Path $selected[0].FullPath `
             -File2Path $selected[1].FullPath `
             -OutputPath $outputFile `
-            -TypeLabel 'Member' `
-            -KeyBuilder $keyBuilder
+            -IdentifierBuilder $identBuilder
     }
     'ltmVirtualStats' {
         # virtualName is already a unique full path, e.g. "/Common/vs_web"
-        $keyBuilder = { param($r) $r.virtualName }
+        $identBuilder = {
+            param($r)
+            [ordered]@{ Virtual = [string]$r.virtualName }
+        }
         Compare-Records `
             -File1Path $selected[0].FullPath `
             -File2Path $selected[1].FullPath `
             -OutputPath $outputFile `
-            -TypeLabel 'Virtual' `
-            -KeyBuilder $keyBuilder
+            -IdentifierBuilder $identBuilder
     }
 }
